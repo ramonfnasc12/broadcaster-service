@@ -1,10 +1,8 @@
-import type { ClientsConfig, ServiceContext, RecorderState } from '@vtex/api'
-import { LRUCache, method, Service } from '@vtex/api'
+import type { ClientsConfig, RecorderState, EventContext } from '@vtex/api'
+import { LRUCache, Service } from '@vtex/api'
 
 import { Clients } from './clients'
-import { status } from './middlewares/status'
-import { validate } from './middlewares/validate'
-
+import { changesSku } from './events/changesSku'
 const TIMEOUT_MS = 800
 
 // Create a LRU memory cache for the Status client.
@@ -14,6 +12,8 @@ const TIMEOUT_MS = 800
 // or a 'cache-control' header with a 'max-age' value. If neither exist, the response will not be cached.
 // To force responses to be cached, consider adding the `forceMaxAge` option to your client methods.
 const memoryCache = new LRUCache<string, any>({ max: 5000 })
+const TREE_SECONDS_MS = 3 * 1000
+const CONCURRENCY = 10
 
 metrics.trackCache('status', memoryCache)
 
@@ -31,12 +31,20 @@ const clients: ClientsConfig<Clients> = {
     status: {
       memoryCache,
     },
+    events: {
+      exponentialTimeoutCoefficient: 2,
+      exponentialBackoffCoefficient: 2,
+      initialBackoffDelay: 50,
+      retries: 1,
+      timeout: TREE_SECONDS_MS,
+      concurrency: CONCURRENCY,
+    },
   },
 }
 
 declare global {
   // We declare a global Context type just to avoid re-writing ServiceContext<Clients, State> in every handler and resolver
-  type Context = ServiceContext<Clients, State>
+  type EventCtx = EventContext<Clients>
 
   // The shape of our State object found in `ctx.state`. This is used as state bag to communicate between middlewares.
   interface State extends RecorderState {
@@ -47,10 +55,7 @@ declare global {
 // Export a service that defines route handlers and client options.
 export default new Service({
   clients,
-  routes: {
-    // `status` is the route ID from service.json. It maps to an array of middlewares (or a single handler).
-    status: method({
-      GET: [validate, status],
-    }),
+  events: {
+    changesSku,
   },
 })
